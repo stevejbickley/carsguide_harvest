@@ -1,0 +1,208 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Fri Jun 14 21:29:10 2024
+
+@author: n11475366
+"""
+
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jun 11 11:23:21 2024
+
+@author: n11475366
+"""
+
+# -*- coding: utf-8 -*-
+"""
+Created on Tue Jun 11 10:53:52 2024
+
+@author: n11475366
+"""
+
+import os
+import time
+import re
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select
+import pandas as pd
+
+# SETUP
+CURR_PATH = os.getcwd()
+input_file = 'ABC_test.xlsx'
+output_file = 'ABC_test_updated.xlsx'
+options = Options()
+# Uncomment the line below to run the browser in headless mode
+# options.add_argument("--headless")
+
+# Function to get HTML source
+def get_html(filename, url, browser):
+    if not os.path.exists(filename):
+        try:
+            browser.get(url)
+            time.sleep(2)
+            html = browser.page_source
+            with open(filename, 'w', encoding='utf8') as f:
+                f.write(html)
+        except Exception as e:
+            print(f"Error getting HTML: {e}")
+
+# Function to check if element exists
+def element_exists(browser, by, value):
+    try:
+        WebDriverWait(browser, 10).until(EC.presence_of_element_located((by, value)))
+        return True
+    except Exception as e:
+        print(f"Error finding element: {e}")
+        return False
+
+# Function to extract all prices and return the lowest price
+def extract_all_prices(browser):
+    prices = []
+    lowest_row = None
+    try:
+        rows = browser.find_elements(By.CLASS_NAME, 'table-row')
+        for row in rows:
+            price_element = row.find_element(By.XPATH, './/td[3]/a')
+            price_text = price_element.text
+            price_match = re.findall(r'\$([\d,]+)', price_text)
+            if price_match:
+                price = int(price_match[0].replace(',', ''))
+                prices.append(price)
+                if lowest_row is None or price < prices[lowest_row]:
+                    lowest_row = rows.index(row)
+    except Exception as e:
+        print(f"Error extracting price: {e}")
+    if lowest_row is not None:
+        return prices[lowest_row], lowest_row
+    else:
+        return None, None
+
+# Read input dataframe
+input_df = pd.read_excel(os.path.join(CURR_PATH, input_file), header=0)
+output_df = input_df.copy()
+output_df['None'] = 0  # Add a new column for missing make, model, year
+
+# Establish web connection
+browser = webdriver.Chrome(options=options)
+browser.maximize_window()
+time.sleep(0.5)
+
+# Base URL
+base_url = 'https://www.carsguide.com.au/price'
+browser.get(base_url)
+time.sleep(1)
+
+# Process each row in the input dataframe
+updates = []
+for i in range(len(input_df)):
+    make = input_df.iloc[i, 0]
+    model = input_df.iloc[i, 1]
+    year = input_df.iloc[i, 2]
+    browser.get(base_url)
+    time.sleep(2)
+    url_link = browser.current_url
+
+    row_updates = {'index': i}
+    try:
+        row_updates['url_link'] = url_link
+        row_updates['carsguide_id'] = url_link.split('id=')[-1]
+
+        # Select vehicle make
+        select = Select(browser.find_element(By.NAME, 'vehicle_make'))
+        select.select_by_value(make)
+        time.sleep(3)
+
+        # Select vehicle model
+        select = Select(browser.find_element(By.NAME, 'vehicle_model_group'))
+        select.select_by_value(model)
+        time.sleep(3)
+
+        # Select vehicle year
+        select = Select(browser.find_element(By.NAME, 'vehicle_years'))
+        select.select_by_visible_text(str(year))
+        time.sleep(3)
+
+        # Click search button
+        browser.find_element(By.ID, 'search-site-section').click()
+        time.sleep(3)
+
+        lowest_price, lowest_row_index = extract_all_prices(browser)
+        if lowest_price:
+            print(f"Lowest price for {make} {model} {year}: ${lowest_price}")
+            row_updates['Price'] = lowest_price
+
+            if lowest_row_index is not None:
+                try:
+                    lowest_row = browser.find_elements(By.CLASS_NAME, 'table-row')[lowest_row_index]
+                    lowest_row.find_element(By.TAG_NAME, 'a').click()
+                    time.sleep(2)
+
+                    body_type_element = browser.find_element(By.CLASS_NAME, 'p-2.text-grey-60')
+                    body_type_text = body_type_element.text
+                    body_type = body_type_text.split(',')[0]
+                    row_updates['BodyType'] = body_type
+
+                    arrow_elements = browser.find_elements(By.CLASS_NAME, 'icon-arrow')
+                    for arrow_element in arrow_elements:
+                        try:
+                            arrow_element.click()
+                            time.sleep(1)
+                        except Exception as e:
+                            print(f"Error clicking arrow element: {e}")
+
+                    try:
+                        accordion_items = browser.find_elements(By.CLASS_NAME, 'accordion-item')
+
+                        for accordion_item in accordion_items:
+                            base_features_present = 'Base features' in accordion_item.text
+                            additional_features_present = 'Additional features' in accordion_item.text
+                            if base_features_present and additional_features_present:
+                                # then we do something
+                                base_features = accordion_item.text.split('\nAdditional features')[0].split('Base features\n')[-1].split('\n')
+                                for base_feature in base_features:
+                                    row_updates[f'{base_feature}'] = int(1)
+                                additional_features = accordion_item.text.split('\nAdditional features')[1].split('\n')[1:]
+                                for additional_feature in additional_features:
+                                    row_updates[f'{base_feature}'] = int(2)
+                            elif base_features_present:
+                                # then we do something
+                                base_features = accordion_item.text.split('\nAdditional features')[0].split('Base features\n')[-1].split('\n')
+                                for base_feature in base_features:
+                                    row_updates[f'{base_feature}'] = int(1)
+                            elif additional_features_present:
+                                # then we do something
+                                additional_features = accordion_item.text.split('\nAdditional features')[1].split('\n')[1:]
+                                for additional_feature in additional_features:
+                                    row_updates[f'{base_feature}'] = int(2)
+                            else:
+                                continue
+
+                    except Exception as e:
+                        print(f"Error extracting lists: {e}")
+
+                except Exception as e:
+                    print(f"Error extracting details: {e}")
+
+        else:
+            print(f"No prices found for {make} {model} {year}")
+            output_df.at[i, 'None'] = 1  # Mark as not found
+
+    except Exception as e:
+        print(f"Error processing {make} {model} {year}: {e}")
+        output_df.at[i, 'None'] = 1  # Mark as not found
+
+    updates.append(row_updates)
+
+# Convert updates to a DataFrame and merge with original DataFrame
+updates_df = pd.DataFrame(updates).set_index('index')
+output_df = output_df.join(updates_df, rsuffix='_updated')
+
+# Write updated data to output Excel file
+output_df.to_excel(output_file, index=False)
+
+# Close the browser
+browser.quit()
