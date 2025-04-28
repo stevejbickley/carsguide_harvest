@@ -1,13 +1,12 @@
 # carsguide_harvest
 
+A basic selenium-based python script that harvests data from carsguide.com on car safety information. Developed as a starting point for QUT-based PhD student Ms. Heshani Rupasinghe. 
 
 ## Preparation
+
+### First clone the repo to your local directory
  
 ### Navigate to the folder
-
-```cd ./stevejbickley/carsguide_harvest```
-
-OR
 
 ```cd ./carsguide_harvest```
 
